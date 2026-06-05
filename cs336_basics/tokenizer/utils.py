@@ -1,4 +1,7 @@
+import json
 import os
+import time
+from functools import wraps
 from typing import BinaryIO
 
 
@@ -49,54 +52,46 @@ def find_chunk_boundaries(
     return sorted(set(chunk_boundaries))
 
 
-## Usage
-with open(..., "rb") as f:
-    num_processes = 4
-    boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
-
-    # The following is a serial implementation, but you can parallelize this
-    # by sending each start/end pair to a set of processes.
-    for start, end in zip(boundaries[:-1], boundaries[1:]):
-        f.seek(start)
-        chunk = f.read(end - start).decode("utf-8", errors="ignore")
-        # Run pre-tokenization on your chunk and store the counts for each pre-token
+def string_to_bytes(s: str, return_int: bool = False) -> list[int] | list[bytes]:
+    byte_array = s.encode("utf-8")
+    return list(map(int, byte_array)) if return_int else [bytes([b]) for b in byte_array]
 
 
-def find_chunk_boundaries(
-        file:BinaryIO,
-        desired_num_chunks:int,
-        split_special_token:bytes,
-)->list[int]:
-    assert isinstance(split_special_token, bytes)
-    
-    file.seek(0, os.SEEK_END)
-    file_size = file.tell()
-    file.seek(0)
+def utf8_bytes_to_string(byte_indices: list[bytes]) -> str:
+    return b"".join(byte_indices).decode("utf-8")
 
-    chunk_size = file_size // desired_num_chunks
 
-    chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
-    chunk_boundaries[-1] = file_size
+def save_vocab_and_merges(
+    vocab: dict[int, bytes],
+    merges: list[tuple[bytes, bytes]],
+    output_dir: str | os.PathLike,
+):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
-    mini_chunk_size = 4096
+    vocab_filepath = os.path.join(output_dir, "vocab.json")
+    merges_filepath = os.path.join(output_dir, "merges.txt")
 
-    for bi in range(1, len(chunk_boundaries) - 1):
-        initial_position = chunk_boundaries[bi]
-        file.seek(initial_position)
+    # Save vocab
+    vocab_inv = {v.decode("latin1"): k for k, v in vocab.items()}
+    with open(vocab_filepath, "w") as vf:
+        json.dump(vocab_inv, vf, ensure_ascii=False, indent=2)
 
-        while True:
-            mini_chunk = file.read(mini_chunk_size)
+    # Save merges
+    with open(merges_filepath, "w") as mf:
+        mf.write("#version: 0.2\n")
+        for a, b in merges:
+            mf.write(f"{a.decode('latin1')} {b.decode('latin1')}\n")
 
-            if mini_chunk == b"":
-                chunk_boundaries[bi] = file_size
-                break
 
-            found_at = mini_chunk.find(split_special_token)
+def timeit(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        result = func(*args, **kwargs)
+        end = time.time()
+        print(f"[TIME] {func.__name__} took {end - start:.2f}s")
 
-            if found_at != -1:
-                chunk_boundaries[bi] = initial_position + found_at
-                break
+        return result
 
-            initial_position += mini_chunk_size
-    
-    return sorted(set(chunk_boundaries))
+    return wrapper
