@@ -319,7 +319,27 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    from cs336_basics.model import TransformerBlock
+    from cs336_basics.config import ModelConfig
+
+    model = ModelConfig(d_model=d_model, num_heads=num_heads, d_ff=d_ff, max_seq_len=max_seq_len, rope_theta=theta)
+
+    block = TransformerBlock(config=model)
+
+    block.mha.q_linear.weight.data = weights["attn.q_proj.weight"].T
+    block.mha.k_linear.weight.data = weights["attn.k_proj.weight"].T
+    block.mha.v_linear.weight.data = weights["attn.v_proj.weight"].T
+    block.mha.out_linear.weight.data = weights["attn.output_proj.weight"].T
+
+    block.ffn.w1.weight.data = weights["ffn.w1.weight"].T
+    block.ffn.w2.weight.data = weights["ffn.w2.weight"].T
+    block.ffn.w3.weight.data = weights["ffn.w3.weight"].T
+
+    block.norm1.weight.data = weights["ln1.weight"]
+    block.norm2.weight.data = weights["ln2.weight"]
+
+    return block(in_features)
+
 
 
 def run_transformer_lm(
@@ -401,7 +421,36 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    from cs336_basics.config import ModelConfig
+    from cs336_basics.model import TransformerLM
+
+    config = ModelConfig(
+        vocab_size=vocab_size,
+        d_model=d_model,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        use_rope=True,
+        rope_theta=rope_theta,
+        max_seq_len=context_length,
+    )
+    model = TransformerLM(config=config)
+    model.token_embedding.weight.data = weights["token_embeddings.weight"]
+    for layer_idx in range(num_layers):
+        layer_prefix = f"layers.{layer_idx}."
+        layer = model.layers[layer_idx]
+        layer.mha.q_linear.weight.data = weights[f"{layer_prefix}attn.q_proj.weight"].T
+        layer.mha.k_linear.weight.data = weights[f"{layer_prefix}attn.k_proj.weight"].T
+        layer.mha.v_linear.weight.data = weights[f"{layer_prefix}attn.v_proj.weight"].T
+        layer.mha.out_linear.weight.data = weights[f"{layer_prefix}attn.output_proj.weight"].T
+        layer.norm1.weight.data = weights[f"{layer_prefix}ln1.weight"]
+        layer.ffn.w1.weight.data = weights[f"{layer_prefix}ffn.w1.weight"].T
+        layer.ffn.w2.weight.data = weights[f"{layer_prefix}ffn.w2.weight"].T
+        layer.ffn.w3.weight.data = weights[f"{layer_prefix}ffn.w3.weight"].T
+        layer.norm2.weight.data = weights[f"{layer_prefix}ln2.weight"]
+    model.final_norm.weight.data = weights["ln_final.weight"]
+    model.output_layer.linear.weight.data = weights["lm_head.weight"].T
+    return model(in_indices)
 
 
 def run_rmsnorm(
@@ -505,7 +554,9 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    from cs336_basics.loss import cross_entropy
+
+    return cross_entropy(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
